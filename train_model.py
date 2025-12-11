@@ -128,18 +128,17 @@ def train_random_forest(X_train, y_train, X_test, y_test):
     
     # Reduced n_estimators for faster training in deployment
     model = RandomForestRegressor(
-        n_estimators=200,           # Reduced from 300 for faster inference
-        max_depth=20,               # Limit depth to prevent overfitting
-        min_samples_split=5,        # Increased for regularization
-        min_samples_leaf=2,         # Increased for regularization
-        max_features='sqrt',        # Use sqrt features for diversity
+        n_estimators=100,
+        max_depth=15,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        max_features='sqrt',
         bootstrap=True,
         random_state=42,
-        n_jobs=-1,                  # Use all cores
+        n_jobs=-1,
         verbose=0,
-        monotonic_cst=None          
     )
-    
+        
     # Train model
     import time
     start_time = time.time()
@@ -178,28 +177,115 @@ def train_random_forest(X_train, y_train, X_test, y_test):
     
     return model, metrics
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Weather Temperature Forecasting - Model Training Script
+This script trains a Random Forest model for temperature prediction
+and saves it for deployment.
+"""
+
+import pandas as pd
+import numpy as np
+import pickle
+import warnings
+from datetime import datetime
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import os
+
+warnings.filterwarnings('ignore')
+
+# ... [semua fungsi sebelumnya tetap sama] ...
+
+def train_random_forest(X_train, y_train, X_test, y_test):
+    """
+    Train Random Forest model with optimized hyperparameters.
+    """
+    print("🌲 Training Random Forest model...")
+    
+    # Reduced n_estimators for faster training in deployment
+    model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=15,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        max_features='sqrt',
+        bootstrap=True,
+        random_state=42,
+        n_jobs=-1,
+        verbose=0,
+    )
+        
+    # Train model
+    import time
+    start_time = time.time()
+    model.fit(X_train, y_train)
+    training_time = time.time() - start_time
+    
+    print(f"✅ Model trained in {training_time:.2f} seconds")
+    
+    # Make predictions
+    y_pred_train = model.predict(X_train)
+    y_pred_test = model.predict(X_test)
+    
+    # Calculate metrics
+    metrics = {
+        'train': {
+            'mae': mean_absolute_error(y_train, y_pred_train),
+            'rmse': np.sqrt(mean_squared_error(y_train, y_pred_train)),
+            'r2': r2_score(y_train, y_pred_train)
+        },
+        'test': {
+            'mae': mean_absolute_error(y_test, y_pred_test),
+            'rmse': np.sqrt(mean_squared_error(y_test, y_pred_test)),
+            'r2': r2_score(y_test, y_pred_test)
+        }
+    }
+    
+    # Print metrics
+    print("\n📊 Model Performance:")
+    print("=" * 50)
+    print(f"{'Metric':<15} {'Training':<15} {'Test':<15}")
+    print("-" * 50)
+    print(f"{'MAE (°C)':<15} {metrics['train']['mae']:<15.3f} {metrics['test']['mae']:<15.3f}")
+    print(f"{'RMSE (°C)':<15} {metrics['train']['rmse']:<15.3f} {metrics['test']['rmse']:<15.3f}")
+    print(f"{'R² Score':<15} {metrics['train']['r2']:<15.3f} {metrics['test']['r2']:<15.3f}")
+    print("=" * 50)
+    
+    return model, metrics
+
+# ==================== FUNGSI YANG DIMODIFIKASI ====================
 def save_model_and_scaler(model, scaler, metrics):
     """
-    Save the trained model and scaler to disk.
+    Save the trained model and scaler to disk with compatibility fixes.
     """
     print("💾 Saving model and scaler...")
     
-    # Save model with compression
+    # SOLUSI: Gunakan joblib untuk kompatibilitas yang lebih baik
+    from joblib import dump
+    
+    # Save dengan joblib (format lebih kompatibel)
+    dump(model, 'model_rf.joblib', compress=3, protocol=2)
+    dump(scaler, 'scaler.joblib', compress=3, protocol=2)
+    
+    # Juga simpan dengan pickle untuk backup (dengan protocol rendah)
     with open('model_rf.pkl', 'wb') as f:
-        pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(model, f, protocol=2)  # Protocol 2 lebih kompatibel
     
-    # Save scaler
     with open('scaler.pkl', 'wb') as f:
-        pickle.dump(scaler, f, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(scaler, f, protocol=2)
     
-    # Save metrics for reference
+    # Save metrics
     with open('model_metrics.json', 'w') as f:
         import json
         json.dump(metrics, f, indent=2)
     
-    # Print model info
-    print(f"✅ Model saved: {os.path.getsize('model_rf.pkl') / 1024 / 1024:.2f} MB")
-    print(f"✅ Scaler saved: {os.path.getsize('scaler.pkl') / 1024:.2f} KB")
+    # Print sizes
+    print(f"✅ Model saved (joblib): {os.path.getsize('model_rf.joblib') / 1024 / 1024:.2f} MB")
+    print(f"✅ Scaler saved (joblib): {os.path.getsize('scaler.joblib') / 1024:.2f} KB")
     
     # Print feature importance summary
     if hasattr(model, 'feature_importances_'):
@@ -214,6 +300,80 @@ def save_model_and_scaler(model, scaler, metrics):
         for i, idx in enumerate(indices):
             print(f"{i+1:2d}. Feature {idx:3d}: {importances[idx]:.4f}")
         print("-" * 40)
+
+def main():
+    """Main training pipeline."""
+    print("=" * 60)
+    print("🌡️ WEATHER TEMPERATURE FORECASTING - MODEL TRAINING")
+    print("=" * 60)
+    
+    # Step 1: Generate/Load data
+    df = generate_synthetic_data(n_samples=5000)  # Reduced for faster training
+    
+    # Step 2: Create lag features
+    df_lag = create_lag_features(df, lag_hours=24)
+    
+    # Step 3: Prepare features and target
+    X = df_lag.drop(columns=['Temperature (C)'])
+    y = df_lag['Temperature (C)']
+    
+    print(f"\n📐 Dataset shape: {X.shape}")
+    print(f"🎯 Target shape: {y.shape}")
+    
+    # Step 4: Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, shuffle=False  # No shuffle for time series
+    )
+    
+    print(f"\n📊 Data Split:")
+    print(f"  Training samples: {len(X_train)} ({len(X_train)/len(X)*100:.1f}%)")
+    print(f"  Test samples: {len(X_test)} ({len(X_test)/len(X)*100:.1f}%)")
+    
+    # Step 5: Scale features
+    print("\n⚖️ Scaling features...")
+    scaler = MinMaxScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    print("✅ Features scaled")
+    
+    # Step 6: Train model
+    model, metrics = train_random_forest(
+        X_train_scaled, y_train, 
+        X_test_scaled, y_test
+    )
+    
+    # Step 7: Save model
+    save_model_and_scaler(model, scaler, metrics)
+    
+    # Step 8: Generate sample predictions
+    print("\n🔍 Sample Predictions:")
+    print("-" * 40)
+    sample_indices = np.random.choice(len(X_test), min(5, len(X_test)), replace=False)
+    for i, idx in enumerate(sample_indices):
+        actual = y_test.iloc[idx]
+        predicted = model.predict([X_test_scaled[idx]])[0]
+        error = predicted - actual
+        print(f"Sample {i+1}: Actual={actual:.2f}°C, "
+              f"Predicted={predicted:.2f}°C, "
+              f"Error={error:+.2f}°C")
+    
+    print("\n" + "=" * 60)
+    print("🎉 MODEL TRAINING COMPLETED SUCCESSFULLY!")
+    print("=" * 60)
+    print("\n📁 Files generated:")
+    print("  - model_rf.joblib (recommended for deployment)")
+    print("  - scaler.joblib (recommended for deployment)")
+    print("  - model_rf.pkl (backup)")
+    print("  - scaler.pkl (backup)")
+    print("  - model_metrics.json (performance metrics)")
+    
+    print("\n🚀 Next steps:")
+    print("  1. Run the app: streamlit run app.py")
+    print("  2. Deploy to Streamlit Cloud")
+    print("  3. Test predictions in the web interface")
+
+if __name__ == "__main__":
+    main()
 
 def main():
     """Main training pipeline."""

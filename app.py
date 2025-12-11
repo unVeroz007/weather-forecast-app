@@ -1,3 +1,29 @@
+# ====================== FIX PICKLE COMPATIBILITY ======================
+import sys
+import pickle as pkl
+
+class CompatibleUnpickler(pkl.Unpickler):
+    def find_class(self, module, name):
+        try:
+            # Import lazy untuk menghindari error
+            if module == 'sklearn.tree._tree' and name == 'Tree':
+                from sklearn.tree._tree import Tree
+                return Tree
+            return super().find_class(module, name)
+        except Exception:
+            # Fallback
+            return super().find_class(module, name)
+
+def load_compatible(filepath):
+    """Load pickle file dengan compatibility fix"""
+    with open(filepath, 'rb') as f:
+        try:
+            return CompatibleUnpickler(f).load()
+        except Exception:
+            # Fallback ke pickle biasa
+            with open(filepath, 'rb') as f2:
+                return pkl.load(f2)
+
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
@@ -23,18 +49,37 @@ st.set_page_config(
 def load_model():
     """Load pre-trained model and scaler with caching"""
     try:
-        # Cek jika model belum ada, generate model demo
-        if not os.path.exists('model_rf.pkl') or not os.path.exists('scaler.pkl'):
-            st.sidebar.warning("Generating demo model...")
-            import train_model
-            st.sidebar.success("Demo model generated!")
+        # Cek jika model belum ada, generate
+        if not os.path.exists('model_rf.joblib') or not os.path.exists('scaler.joblib'):
+            if not os.path.exists('model_rf.pkl') or not os.path.exists('scaler.pkl'):
+                st.sidebar.warning("Generating demo model...")
+                try:
+                    import train_model
+                    st.sidebar.success("Model generated!")
+                except Exception as e:
+                    st.sidebar.error(f"Failed to generate model: {e}")
+                    return None, None, False
         
-        with open('model_rf.pkl', 'rb') as f:
-            model = pickle.load(f)
-        with open('scaler.pkl', 'rb') as f:
-            scaler = pickle.load(f)
+        # Priority 1: Joblib
+        try:
+            from joblib import load
+            model = load('model_rf.joblib')
+            scaler = load('scaler.joblib')
+            st.sidebar.success("✅ Model loaded with joblib")
+            return model, scaler, True
+        except:
+            pass
         
-        return model, scaler, True
+        # Priority 2: Pickle dengan fix
+        try:
+            model = load_compatible('model_rf.pkl')
+            scaler = load_compatible('scaler.pkl')
+            st.sidebar.success("✅ Model loaded with compatibility fix")
+            return model, scaler, True
+        except Exception as e:
+            st.sidebar.error(f"Pickle load error: {str(e)[:100]}")
+            return None, None, False
+            
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
         return None, None, False
@@ -133,159 +178,196 @@ elif page == "🔮 Make Prediction":
     if not success:
         st.error("Failed to load model. Please check if model files exist.")
         if st.button("Generate Demo Model"):
-            import train_model
-            st.rerun()
+            import subprocess
+            import sys
+            result = subprocess.run([sys.executable, "train_model.py"], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                st.success("Demo model generated successfully!")
+                st.rerun()
+            else:
+                st.error(f"Error generating model: {result.stderr}")
     else:
         st.success("✅ Model loaded successfully!")
         
-        # Input parameters dalam tabs
-        tab1, tab2 = st.tabs(["⚙️ Basic Parameters", "🕐 Time Settings"])
+        # ======== TAMBAHKAN INPUT YANG HILANG ========
+        st.subheader("🌤️ Current Weather Conditions")
         
-        with tab1:
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.subheader("🌡️ Temperature")
-                current_temp = st.number_input("Current Temperature (°C)", 
-                                             min_value=-20.0, max_value=50.0, 
-                                             value=20.0, step=0.1)
-                apparent_temp = st.number_input("Apparent Temperature (°C)", 
-                                              min_value=-20.0, max_value=50.0, 
-                                              value=19.5, step=0.1)
-            
-            with col2:
-                st.subheader("💨 Wind & Visibility")
-                wind_speed = st.number_input("Wind Speed (km/h)", 
-                                           min_value=0.0, max_value=100.0, 
-                                           value=12.5, step=0.1)
-                visibility = st.number_input("Visibility (km)", 
-                                           min_value=0.0, max_value=50.0, 
-                                           value=10.2, step=0.1)
-            
-            with col3:
-                st.subheader("🌊 Humidity & Pressure")
-                humidity = st.number_input("Humidity (%)", 
-                                         min_value=0.0, max_value=100.0, 
-                                         value=75.0, step=0.1)
-                pressure = st.number_input("Pressure (hPa)", 
-                                         min_value=950.0, max_value=1050.0, 
-                                         value=1013.25, step=0.1)
+        col1, col2, col3 = st.columns(3)
         
-        with tab2:
-            col1, col2 = st.columns(2)
-            with col1:
-                prediction_hour = st.selectbox(
-                    "Prediction for next (hours)",
-                    [1, 3, 6, 12, 24],
-                    index=0
-                )
-                season = st.selectbox(
-                    "Season",
-                    ["Spring", "Summer", "Fall", "Winter"]
-                )
-            
-            with col2:
-                hour_of_day = st.slider("Hour of Day", 0, 23, 12)
-                is_weekend = st.checkbox("Weekend", value=False)
+        with col1:
+            current_temp = st.number_input("Current Temperature (°C)", 
+                                         min_value=-20.0, max_value=50.0, 
+                                         value=20.0, step=0.1)
+            apparent_temp = st.number_input("Apparent Temperature (°C)", 
+                                          min_value=-20.0, max_value=50.0, 
+                                          value=19.5, step=0.1)
         
-        # Tombol prediksi
+        with col2:
+            humidity = st.number_input("Humidity (%)", 
+                                     min_value=0.0, max_value=100.0, 
+                                     value=75.0, step=0.1)
+            pressure = st.number_input("Pressure (hPa)", 
+                                     min_value=950.0, max_value=1050.0, 
+                                     value=1013.25, step=0.1)
+        
+        with col3:
+            wind_speed = st.number_input("Wind Speed (km/h)", 
+                                       min_value=0.0, max_value=100.0, 
+                                       value=12.5, step=0.1)
+            visibility = st.number_input("Visibility (km)", 
+                                       min_value=0.0, max_value=50.0, 
+                                       value=10.2, step=0.1)
+        
+        # Time settings
+        st.subheader("🕐 Time Settings")
+        col_time1, col_time2 = st.columns(2)
+        
+        with col_time1:
+            hour_of_day = st.slider("Hour of Day", 0, 23, 12)
+            prediction_hour = st.selectbox(
+                "Prediction for next (hours)",
+                [1, 3, 6, 12, 24],
+                index=0
+            )
+        
+        with col_time2:
+            season = st.selectbox(
+                "Season",
+                ["Spring", "Summer", "Fall", "Winter"]
+            )
+            # Tidak perlu is_weekend karena tidak dipakai di model
+        
+        # ======== TOMBOL PREDIKSI ========
         if st.button("🔍 Predict Temperature", type="primary", use_container_width=True):
             with st.spinner(f"Predicting temperature for next {prediction_hour} hours..."):
-                # Prepare features
-                # 1. Base features (5 fitur)
-                base_features = np.array([
-                    humidity, pressure, wind_speed, visibility, apparent_temp
-                ])
-
-                # 2. Generate lag features (120 fitur)
-                lag_features = []
-                for lag in range(1, 25):
-                    decay = np.exp(-lag / 6)
-                    lagged = base_features * decay
-                    lag_features.extend(lagged)
-
-                # 3. Time-based cyclical features (4 fitur)
-                hour_sin = np.sin(2 * np.pi * hour_of_day / 24)
-                hour_cos = np.cos(2 * np.pi * hour_of_day / 24)
-
-                current_month = datetime.now().month
-                month_sin = np.sin(2 * np.pi * current_month / 12)
-                month_cos = np.cos(2 * np.pi * current_month / 12)
-
-                time_features = np.array([hour_sin, hour_cos, month_sin, month_cos])
-
-                # 4. FINAL — now matches training: 5 + 120 + 4 = 129
-                all_features = np.concatenate([base_features, lag_features, time_features])
-
-                
-                # Scale and predict
                 try:
+                    # 1. Base features (5 fitur sesuai dengan scaler)
+                    # PERHATIAN: Urutan HARUS SAMA dengan training!
+                    # Sesuai scaler.pkl: Humidity, Pressure, Wind Speed, Visibility, Apparent Temp
+                    base_features = np.array([
+                        float(humidity),              # Humidity
+                        float(pressure),              # Pressure (millibars)
+                        float(wind_speed),           # Wind Speed (km/h)
+                        float(visibility),           # Visibility (km)
+                        float(apparent_temp)         # Apparent Temperature (C)
+                    ])
+                    
+                    # DEBUG: Tampilkan base features
+                    st.write(f"Base features (5): {base_features}")
+                    
+                    # 2. Generate lag features (24 lag untuk 5 fitur = 120 fitur)
+                    lag_features = []
+                    for lag in range(1, 25):  # lag 1-24
+                        decay = np.exp(-lag / 6)  # Exponential decay
+                        lagged_values = base_features * decay
+                        lag_features.extend(lagged_values)
+                    
+                    st.write(f"Lag features generated: {len(lag_features)}")
+                    
+                    # 3. Time-based cyclical features (4 fitur)
+                    hour_sin = np.sin(2 * np.pi * float(hour_of_day) / 24)
+                    hour_cos = np.cos(2 * np.pi * float(hour_of_day) / 24)
+                    
+                    # Map season to month
+                    season_to_month = {"Spring": 3, "Summer": 6, "Fall": 9, "Winter": 12}
+                    month = season_to_month.get(season, 6)
+                    month_sin = np.sin(2 * np.pi * float(month) / 12)
+                    month_cos = np.cos(2 * np.pi * float(month) / 12)
+                    
+                    time_features = np.array([hour_sin, hour_cos, month_sin, month_cos])
+                    
+                    # 4. TOTAL: 5 + 120 + 4 = 129 features
+                    all_features = np.concatenate([base_features, lag_features, time_features])
+                    
+                    st.write(f"Total features: {len(all_features)}")
+                    
+                    # Cek kompatibilitas dengan scaler
+                    if hasattr(scaler, 'n_features_in_'):
+                        expected_features = scaler.n_features_in_
+                        if len(all_features) != expected_features:
+                            st.error(f"❌ Feature mismatch! Model expects {expected_features} features, but got {len(all_features)}")
+                            st.info(f"Expected: {expected_features}, Got: {len(all_features)}")
+                            
+                            # Jika tidak match, coba gunakan template features
+                            if expected_features == 129:
+                                st.warning("Trying to use template features...")
+                                # Gunakan array kosong dengan ukuran yang benar
+                                all_features = np.zeros(expected_features)
+                                # Isi dengan nilai default
+                                all_features[:5] = base_features
+                                all_features[-4:] = time_features
+                        else:
+                            st.success(f"✅ Feature count matches: {expected_features}")
+                    
+                    # Scale features
                     features_scaled = scaler.transform([all_features])
+                    
+                    # Make prediction
                     raw_pred = model.predict(features_scaled)
                     
-                    # SOLUSI: Pastikan dapatkan single float value
+                    # Convert to float
                     if isinstance(raw_pred, (list, np.ndarray)):
                         prediction = float(raw_pred[0])
                     else:
                         prediction = float(raw_pred)
                     
-                    # Pastikan semua input adalah float
-                    hour_of_day = float(hour_of_day) if hour_of_day else 12.0
-                    current_temp = float(current_temp) if current_temp else 20.0
-                    
-                    # Adjust based on time factors
-                    hour_factor = 0.5 * np.sin(hour_of_day * np.pi / 12 - np.pi/2)
-                    season_factors = {"Spring": 0.0, "Summer": 2.0, "Fall": -1.0, "Winter": -3.0}
-                    prediction = prediction + hour_factor + season_factors.get(season, 0.0)
-                    
-                    # Display results
+                    # ======== TAMPILKAN HASIL ========
                     st.markdown("---")
-                    
-                    # Result cards - DENGAN KONVERSI EXPLISIT
+                    st.subheader("📊 Prediction Results")
+
+                    # Result cards
                     col_result1, col_result2, col_result3 = st.columns(3)
-                    
+
                     with col_result1:
-                        delta = prediction - current_temp
+                        delta = prediction - float(current_temp)
                         st.metric("Predicted Temperature", f"{prediction:.1f} °C", f"{delta:+.1f} °C")
-                    
+
                     with col_result2:
                         confidence = max(0.7, 1 - abs(prediction - 20)/30)
-                        st.metric("Confidence Level", f"{confidence*100:.1f}%", "High" if confidence > 0.8 else "Medium")
-                    
+                        st.metric("Confidence Level", f"{confidence*100:.1f}%", 
+                                "High" if confidence > 0.8 else "Medium")
+
                     with col_result3:
                         st.metric("Prediction Horizon", f"{prediction_hour} hours", f"for {season}")
-                    
-                    # ✅ BENAR: VISUALISASI HARUS DI SINI (MASIH DALAM try)
+
                     # Visualization
                     st.subheader("📈 Prediction Trend")
-                    
+
                     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-                    
-                    # Trend plot
+
+                    # Trend plot - DIPERBAIKI
                     hours = list(range(-6, 7))
-                    base_temp = current_temp
-                    temps = [base_temp + i * (prediction - current_temp)/12 for i in range(13)]
-                    
+                    base_temp = float(current_temp)
+                    temps = [base_temp + i * (prediction - base_temp)/12 for i in range(13)]
+
+                    # KONVERSI ke numpy array untuk operasi matematika
+                    temps_np = np.array(temps)
+
                     ax1.plot(hours[:7], temps[:7], 'b-o', label='Historical', linewidth=2)
                     ax1.plot(hours[6:], temps[6:], 'r--o', label='Predicted', linewidth=2)
                     ax1.axvline(x=0, color='gray', linestyle=':', alpha=0.5)
-                    ax1.fill_between(hours[6:], temps[6:]-1, temps[6:]+1, alpha=0.2, color='red')
+
+                    # PERBAIKAN: Gunakan array numpy
+                    ax1.fill_between(hours[6:], temps_np[6:]-1, temps_np[6:]+1, alpha=0.2, color='red')
+
                     ax1.set_xlabel('Hours from now')
                     ax1.set_ylabel('Temperature (°C)')
                     ax1.set_title('Temperature Forecast Trend')
                     ax1.legend()
                     ax1.grid(True, alpha=0.3)
-                    
+
                     # Feature importance for this prediction
-                    feature_importance = np.abs(model.feature_importances_[:5])
-                    features_short = ['Humidity', 'Pressure', 'Wind', 'Visibility', 'Apparent Temp']
-                    colors = plt.cm.Set3(np.linspace(0, 1, 5))
-                    ax2.barh(features_short, feature_importance, color=colors)
-                    ax2.set_xlabel('Relative Importance')
-                    ax2.set_title('Feature Impact on Prediction')
-                    
+                    if hasattr(model, 'feature_importances_'):
+                        feature_importance = model.feature_importances_[:5]
+                        features_short = ['Humidity', 'Pressure', 'Wind', 'Visibility', 'Apparent Temp']
+                        colors = plt.cm.Set3(np.linspace(0, 1, 5))
+                        ax2.barh(features_short, feature_importance, color=colors)
+                        ax2.set_xlabel('Relative Importance')
+                        ax2.set_title('Top 5 Feature Impacts')
+
                     st.pyplot(fig)
-                    
+
                     # Recommendations
                     st.subheader("🎯 Recommendations")
                     if prediction > 30:
@@ -294,12 +376,16 @@ elif page == "🔮 Make Prediction":
                         st.info("🧥 Cold temperature expected. Dress warmly!")
                     else:
                         st.success("✅ Comfortable temperature expected. Perfect weather!")
-
-                # ✅ HANYA SATU except block di akhir
+                        
                 except Exception as e:
-                    st.error(f"Prediction error: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())  # Tampilkan error detail
+                    st.error(f"❌ Prediction error: {str(e)}")
+                    # Debug info
+                    with st.expander("🔧 Debug Information"):
+                        st.write(f"All features shape: {all_features.shape if 'all_features' in locals() else 'N/A'}")
+                        if 'scaler' in locals() and hasattr(scaler, 'n_features_in_'):
+                            st.write(f"Scaler expects: {scaler.n_features_in_} features")
+                        import traceback
+                        st.code(traceback.format_exc())
 
 # ====================== HALAMAN ANALISIS MODEL ======================
 elif page == "📊 Model Analysis":
@@ -809,13 +895,15 @@ elif page == "ℹ️ About":
         
         ### 👥 Development Team
         **Kelompok 3 - Big Data Project**  
-        - Data Scientists: 2 members  
-        - ML Engineers: 2 members  
-        - Frontend Developers: 1 member  
+        - Ezza Addini
+        - Muhammad Hafiz
+        - Muhammad Galid Avero
+        - Muhammad Luthfi Kautsar R.
+        - Fikri Hanif 
         
-        **Course**: Big Data Analytics  
-        **Institution**: University Program  
-        **Date**: December 2024  
+        **Course**: Big Data  
+        **Institution**: Andalas University
+        **Date**: December 2025
         
         ### 📞 Support
         For issues or questions:
@@ -884,9 +972,9 @@ else:
 st.sidebar.markdown("### 🌐 Deployment")
 st.sidebar.info("""
 **Platform**: Streamlit Cloud  
-**Region**: Singapore  
+**Region**: Indonesia   
 **Version**: 1.0.0  
-**Last Updated**: Dec 2024
+**Last Updated**: Dec 2025
 """)
 
 st.sidebar.markdown("### 📧 Contact")
