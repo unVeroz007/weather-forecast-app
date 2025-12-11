@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import pickle
 import os
 import warnings
@@ -19,43 +21,23 @@ st.set_page_config(
 # ====================== FUNGSI LOAD MODEL ======================
 @st.cache_resource
 def load_model():
-    """Load pre-trained model and scaler - SIMPLE VERSION"""
+    """Load pre-trained model and scaler with caching"""
     try:
-        # Priority 1: Coba load dengan joblib
-        if os.path.exists('model_rf.joblib'):
-            from joblib import load
-            model = load('model_rf.joblib')
-            scaler = load('scaler.joblib')
-            return model, scaler, True
-        # Priority 2: Coba load dengan pickle
-        elif os.path.exists('model_rf.pkl'):
-            with open('model_rf.pkl', 'rb') as f:
-                model = pickle.load(f)
-            with open('scaler.pkl', 'rb') as f:
-                scaler = pickle.load(f)
-            return model, scaler, True
-        else:
-            # Jika tidak ada, buat dummy
-            return create_dummy_model()
+        # Cek jika model belum ada, generate model demo
+        if not os.path.exists('model_rf.pkl') or not os.path.exists('scaler.pkl'):
+            st.sidebar.warning("Generating demo model...")
+            import train_model
+            st.sidebar.success("Demo model generated!")
+        
+        with open('model_rf.pkl', 'rb') as f:
+            model = pickle.load(f)
+        with open('scaler.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+        
+        return model, scaler, True
     except Exception as e:
-        st.sidebar.error(f"Load error: {str(e)[:50]}")
-        return create_dummy_model()
-
-def create_dummy_model():
-    """Create simple dummy model"""
-    from sklearn.ensemble import RandomForestRegressor
-    from sklearn.preprocessing import MinMaxScaler
-    
-    model = RandomForestRegressor(n_estimators=10, random_state=42)
-    scaler = MinMaxScaler()
-    
-    # Dummy fit
-    X = np.random.rand(100, 129)
-    y = np.random.randn(100) + 20
-    scaler.fit(X)
-    model.fit(scaler.transform(X), y)
-    
-    return model, scaler, True
+        st.error(f"Error loading model: {str(e)}")
+        return None, None, False
 
 # ====================== SIDEBAR NAVIGASI ======================
 st.sidebar.title("🌡️ Navigation")
@@ -279,29 +261,45 @@ elif page == "🔮 Make Prediction":
                     with col_result3:
                         st.metric("Prediction Horizon", f"{prediction_hour} hours", f"for {season}")
 
-                    # Visualization - STREAMLIT NATIVE
+                    # Visualization - MATPLOTLIB VERSION
                     st.subheader("📈 Prediction Trend")
 
-                    # Trend chart
-                    hours = list(range(24))
-                    temps_trend = []
-                    for hour in hours:
-                        if hour < 6:
-                            temp = float(current_temp) + np.random.normal(0, 0.3)
-                        else:
-                            progress = min(1.0, (hour - 6) / 18)
-                            temp = float(current_temp) + (prediction - float(current_temp)) * progress
-                            temp += np.random.normal(0, 0.5)
-                        temps_trend.append(temp)
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-                    trend_data = pd.DataFrame({
-                        'Hour': hours,
-                        'Temperature (°C)': temps_trend,
-                        'Type': ['Historical' if h < 6 else 'Predicted' for h in hours]
-                    })
+                    # Trend plot
+                    hours = list(range(-6, 7))
+                    temps = [float(current_temp) + i * (prediction - float(current_temp))/12 for i in range(13)]
+                    temps_np = np.array(temps)
 
-                    # Line chart dengan warna berbeda
-                    st.line_chart(trend_data, x='Hour', y='Temperature (°C)', color='Type')
+                    ax1.plot(hours[:7], temps[:7], 'b-o', label='Historical', linewidth=2)
+                    ax1.plot(hours[6:], temps[6:], 'r--o', label='Predicted', linewidth=2)
+                    ax1.axvline(x=0, color='gray', linestyle=':', alpha=0.5)
+                    ax1.fill_between(hours[6:], temps_np[6:]-1, temps_np[6:]+1, alpha=0.2, color='red')
+                    ax1.set_xlabel('Hours from now')
+                    ax1.set_ylabel('Temperature (°C)')
+                    ax1.set_title('Temperature Forecast Trend')
+                    ax1.legend()
+                    ax1.grid(True, alpha=0.3)
+
+                    # Feature importance for this prediction
+                    if hasattr(model, 'feature_importances_'):
+                        feature_importance = model.feature_importances_[:5]
+                        features_short = ['Humidity', 'Pressure', 'Wind', 'Visibility', 'Apparent Temp']
+                        colors = plt.cm.Set3(np.linspace(0, 1, 5))
+                        ax2.barh(features_short, feature_importance, color=colors)
+                        ax2.set_xlabel('Relative Importance')
+                        ax2.set_title('Top 5 Feature Impacts')
+                    else:
+                        # Dummy plot jika tidak ada feature importance
+                        features_short = ['Humidity', 'Pressure', 'Wind', 'Visibility', 'Apparent Temp']
+                        dummy_importance = [0.35, 0.25, 0.18, 0.12, 0.10]
+                        colors = plt.cm.Set3(np.linspace(0, 1, 5))
+                        ax2.barh(features_short, dummy_importance, color=colors)
+                        ax2.set_xlabel('Relative Importance')
+                        ax2.set_title('Top 5 Feature Impacts (Estimated)')
+
+                    plt.tight_layout()
+                    st.pyplot(fig)
 
                     # Confidence interval
                     st.subheader("📊 Confidence Interval")
@@ -312,34 +310,6 @@ elif page == "🔮 Make Prediction":
                         st.metric("Predicted", f"{prediction:.1f}°C")
                     with col_conf3:
                         st.metric("Worst Case", f"{prediction - 1:.1f}°C", "-1.0°C")
-
-                    # Feature Importance
-                    st.subheader("🎯 Feature Impact")
-                    
-                    if hasattr(model, 'feature_importances_'):
-                        feature_importance = model.feature_importances_[:5]
-                        features_short = ['Humidity', 'Pressure', 'Wind', 'Visibility', 'Apparent Temp']
-                        
-                        importance_df = pd.DataFrame({
-                            'Feature': features_short,
-                            'Importance': feature_importance
-                        })
-                        
-                        # Bar chart
-                        st.bar_chart(importance_df.set_index('Feature'))
-                        
-                        # Table
-                        st.dataframe(
-                            importance_df.style.format({'Importance': '{:.3f}'}).background_gradient(subset=['Importance'], cmap='Blues'),
-                            use_container_width=True
-                        )
-                    else:
-                        # Dummy data
-                        factors = pd.DataFrame({
-                            'Factor': ['Humidity', 'Time of Day', 'Pressure', 'Wind Speed', 'Season'],
-                            'Impact Score': [0.35, 0.28, 0.18, 0.12, 0.07]
-                        })
-                        st.bar_chart(factors.set_index('Factor'))
 
                     # Recommendations
                     st.subheader("🎯 Recommendations")
@@ -395,14 +365,21 @@ elif page == "📊 Model Analysis":
             np.random.seed(42)
             errors = np.random.normal(0, 1.5, 1000)
             
-            # Histogram dengan Streamlit
-            hist_values, bin_edges = np.histogram(errors, bins=30)
-            hist_df = pd.DataFrame({
-                'Error Range': [f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}" for i in range(len(bin_edges)-1)],
-                'Frequency': hist_values
-            })
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
             
-            st.bar_chart(hist_df.set_index('Error Range'))
+            ax1.hist(errors, bins=30, edgecolor='black', alpha=0.7, color='skyblue')
+            ax1.axvline(x=0, color='red', linestyle='--', linewidth=2)
+            ax1.set_xlabel('Prediction Error (°C)')
+            ax1.set_ylabel('Frequency')
+            ax1.set_title('Error Distribution Histogram')
+            ax1.grid(True, alpha=0.3)
+            
+            ax2.boxplot(errors, vert=False)
+            ax2.set_xlabel('Prediction Error (°C)')
+            ax2.set_title('Error Distribution Boxplot')
+            ax2.grid(True, alpha=0.3)
+            
+            st.pyplot(fig)
             
             # Error statistics
             error_stats = pd.DataFrame({
@@ -411,15 +388,6 @@ elif page == "📊 Model Analysis":
                               f"{errors.min():.3f}", f"{errors.max():.3f}",
                               f"{np.percentile(errors, 75) - np.percentile(errors, 25):.3f}"]
             })
-            
-            # Boxplot sederhana
-            st.subheader("Error Distribution Boxplot")
-            boxplot_data = pd.DataFrame({'Errors': errors})
-            st.dataframe(
-                boxplot_data.describe().style.format("{:.3f}"),
-                use_container_width=True
-            )
-            
             st.dataframe(error_stats, use_container_width=True)
         
         with tab2:
@@ -446,26 +414,26 @@ elif page == "📊 Model Analysis":
                 top_features = [feature_names[i] for i in indices[:n_top]]
                 top_importance = model.feature_importances_[indices[:n_top]]
                 
-                # Horizontal bar chart dengan Streamlit
-                importance_df = pd.DataFrame({
-                    'Feature': top_features[::-1],  # Reverse untuk ascending
-                    'Importance': top_importance[::-1]
-                })
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
                 
-                st.bar_chart(importance_df.set_index('Feature'))
+                # Horizontal bar chart
+                bars = ax1.barh(top_features[::-1], top_importance[::-1])
+                ax1.set_xlabel('Importance Score')
+                ax1.set_title(f'Top {n_top} Most Important Features')
+                ax1.grid(True, alpha=0.3, axis='x')
                 
-                # Pie chart sederhana sebagai tabel
-                st.subheader("Top 5 Features Contribution")
-                top5_df = pd.DataFrame({
-                    'Feature': top_features[:5],
-                    'Importance': top_importance[:5],
-                    'Percentage': [f"{(imp/sum(top_importance[:5])*100):.1f}%" for imp in top_importance[:5]]
-                })
+                # Add value labels
+                for i, (bar, val) in enumerate(zip(bars, top_importance[::-1])):
+                    ax1.text(val + 0.001, bar.get_y() + bar.get_height()/2,
+                            f'{val:.4f}', va='center', fontsize=9)
                 
-                st.dataframe(
-                    top5_df.style.format({'Importance': '{:.4f}'}),
-                    use_container_width=True
-                )
+                # Pie chart for top 5
+                ax2.pie(top_importance[:5], labels=top_features[:5], autopct='%1.1f%%',
+                       colors=plt.cm.Paired(np.linspace(0, 1, 5)))
+                ax2.set_title('Top 5 Features Contribution')
+                
+                plt.tight_layout()
+                st.pyplot(fig)
             else:
                 st.info("Feature importance not available for this model type.")
         
@@ -480,37 +448,41 @@ elif page == "📊 Model Analysis":
             predicted = actual + np.random.normal(0, 1.5, n_points)
             residuals = predicted - actual
             
-            # Residuals vs Predicted - Scatter plot
-            st.subheader("Residuals vs Predicted")
-            residual_data = pd.DataFrame({
-                'Predicted': predicted,
-                'Residual': residuals
-            })
-            st.scatter_chart(residual_data, x='Predicted', y='Residual')
+            fig = plt.figure(figsize=(12, 8))
+            
+            # Residuals vs Predicted
+            ax1 = plt.subplot(221)
+            ax1.scatter(predicted, residuals, alpha=0.6, c=residuals, cmap='coolwarm')
+            ax1.axhline(y=0, color='r', linestyle='--')
+            ax1.set_xlabel('Predicted Values')
+            ax1.set_ylabel('Residuals')
+            ax1.set_title('Residuals vs Predicted')
+            ax1.grid(True, alpha=0.3)
+            
+            # Q-Q plot
+            ax2 = plt.subplot(222)
+            from scipy import stats
+            stats.probplot(residuals, dist="norm", plot=ax2)
+            ax2.set_title('Q-Q Plot')
+            ax2.grid(True, alpha=0.3)
             
             # Residual histogram
-            st.subheader("Residual Distribution")
-            residual_counts, residual_bins = np.histogram(residuals, bins=20)
-            residual_hist_df = pd.DataFrame({
-                'Residual Range': [f"{residual_bins[i]:.1f}-{residual_bins[i+1]:.1f}" for i in range(len(residual_bins)-1)],
-                'Frequency': residual_counts
-            })
-            st.bar_chart(residual_hist_df.set_index('Residual Range'))
+            ax3 = plt.subplot(223)
+            ax3.hist(residuals, bins=20, edgecolor='black', alpha=0.7)
+            ax3.axvline(x=0, color='r', linestyle='--')
+            ax3.set_xlabel('Residuals')
+            ax3.set_ylabel('Frequency')
+            ax3.set_title('Residual Distribution')
+            ax3.grid(True, alpha=0.3)
             
-            # Residual statistics
-            st.subheader("Residual Statistics")
-            resid_stats = pd.DataFrame({
-                'Statistic': ['Mean', 'Std Dev', 'Min', 'Max', 'Skewness', 'Kurtosis'],
-                'Value': [
-                    f"{residuals.mean():.3f}",
-                    f"{residuals.std():.3f}",
-                    f"{residuals.min():.3f}",
-                    f"{residuals.max():.3f}",
-                    f"{pd.Series(residuals).skew():.3f}",
-                    f"{pd.Series(residuals).kurtosis():.3f}"
-                ]
-            })
-            st.dataframe(resid_stats, use_container_width=True)
+            # Residual autocorrelation
+            ax4 = plt.subplot(224)
+            pd.plotting.autocorrelation_plot(residuals, ax=ax4)
+            ax4.set_title('Residual Autocorrelation')
+            ax4.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            st.pyplot(fig)
         
         with tab4:
             st.subheader("Model Configuration")
@@ -537,7 +509,7 @@ elif page == "📊 Model Analysis":
 elif page == "📈 Data Visualization":
     st.title("📈 Data Analysis & Visualization")
     
-    # Generate synthetic weather data
+    # Generate synthetic weather data for visualization
     np.random.seed(42)
     n_days = 365
     dates = pd.date_range('2024-01-01', periods=n_days, freq='D')
@@ -576,20 +548,24 @@ elif page == "📈 Data Visualization":
             key="ts_var"
         )
         
-        # Time series dengan line chart
-        ts_data = weather_df.set_index('Date')[variable]
-        st.line_chart(ts_data)
+        # Plot time series
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.plot(weather_df['Date'], weather_df[variable], linewidth=1, alpha=0.7)
         
-        # Rolling average
+        # Add rolling average
         window = st.slider("Rolling Average Window (days)", 1, 30, 7)
         rolling_avg = weather_df[variable].rolling(window=window).mean()
+        ax.plot(weather_df['Date'], rolling_avg, 'r-', linewidth=2, label=f'{window}-day Average')
         
-        rolling_df = pd.DataFrame({
-            'Original': weather_df[variable],
-            f'{window}-day Average': rolling_avg
-        }, index=weather_df['Date'])
+        ax.set_xlabel('Date')
+        ax.set_ylabel(variable)
+        ax.set_title(f'{variable} Time Series with {window}-day Moving Average')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
         
-        st.line_chart(rolling_df)
+        # Format x-axis for dates
+        fig.autofmt_xdate()
+        st.pyplot(fig)
         
         # Statistical summary
         st.subheader("Statistical Summary")
@@ -607,7 +583,7 @@ elif page == "📈 Data Visualization":
     with tab2:
         st.subheader("Seasonal Heatmaps")
         
-        # Prepare data
+        # Prepare data for heatmap
         weather_df['Month'] = weather_df['Date'].dt.month
         weather_df['Day'] = weather_df['Date'].dt.day
         
@@ -618,7 +594,7 @@ elif page == "📈 Data Visualization":
             key="heatmap_var"
         )
         
-        # Create pivot table
+        # Create pivot table for heatmap
         pivot_data = weather_df.pivot_table(
             values=heatmap_var,
             index='Month',
@@ -626,11 +602,27 @@ elif page == "📈 Data Visualization":
             aggfunc='mean'
         )
         
-        # Display sebagai tabel dengan gradient
-        st.dataframe(
-            pivot_data.style.background_gradient(cmap='RdYlBu_r'),
-            use_container_width=True
-        )
+        # Plot heatmap
+        fig, ax = plt.subplots(figsize=(14, 6))
+        im = ax.imshow(pivot_data.values, aspect='auto', cmap='RdYlBu_r')
+        
+        # Set labels
+        ax.set_xlabel('Day of Month')
+        ax.set_ylabel('Month')
+        ax.set_title(f'Monthly {heatmap_var} Heatmap')
+        
+        # Set ticks
+        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        ax.set_yticks(range(12))
+        ax.set_yticklabels(month_names)
+        
+        ax.set_xticks(range(0, 31, 5))
+        ax.set_xticklabels(range(1, 32, 5))
+        
+        # Add colorbar
+        plt.colorbar(im, ax=ax, label=heatmap_var)
+        st.pyplot(fig)
         
         # Correlation heatmap
         st.subheader("Feature Correlation Heatmap")
@@ -638,11 +630,11 @@ elif page == "📈 Data Visualization":
         numeric_cols = ['Temperature (°C)', 'Humidity (%)', 'Pressure (hPa)', 'Wind Speed (km/h)']
         corr_matrix = weather_df[numeric_cols].corr()
         
-        st.dataframe(
-            corr_matrix.style.background_gradient(cmap='coolwarm', axis=None)
-            .format("{:.2f}"),
-            use_container_width=True
-        )
+        fig, ax = plt.subplots(figsize=(8, 6))
+        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0,
+                   square=True, linewidths=1, cbar_kws={"shrink": 0.8})
+        ax.set_title('Correlation Matrix between Features')
+        st.pyplot(fig)
     
     with tab3:
         st.subheader("Feature Distributions")
@@ -655,17 +647,21 @@ elif page == "📈 Data Visualization":
         )
         
         if dist_vars:
-            for var in dist_vars:
-                st.subheader(f"Distribution of {var}")
-                
-                # Histogram sederhana
-                hist_vals, hist_bins = np.histogram(weather_df[var], bins=30)
-                hist_df = pd.DataFrame({
-                    'Value Range': [f"{hist_bins[i]:.1f}-{hist_bins[i+1]:.1f}" for i in range(len(hist_bins)-1)],
-                    'Frequency': hist_vals
-                })
-                
-                st.bar_chart(hist_df.set_index('Value Range'))
+            fig, axes = plt.subplots(1, len(dist_vars), figsize=(5*len(dist_vars), 4))
+            
+            if len(dist_vars) == 1:
+                axes = [axes]
+            
+            for ax, var in zip(axes, dist_vars):
+                # Histogram with KDE
+                sns.histplot(weather_df[var], kde=True, ax=ax, bins=30)
+                ax.set_xlabel(var)
+                ax.set_ylabel('Frequency')
+                ax.set_title(f'Distribution of {var}')
+                ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            st.pyplot(fig)
             
             # Statistical comparison
             st.subheader("Distribution Statistics")
@@ -683,15 +679,11 @@ elif page == "📈 Data Visualization":
         )
         
         if len(scatter_vars) >= 2:
-            # Multiple scatter plots
-            for i in range(len(scatter_vars)):
-                for j in range(i+1, len(scatter_vars)):
-                    st.subheader(f"{scatter_vars[j]} vs {scatter_vars[i]}")
-                    scatter_data = pd.DataFrame({
-                        scatter_vars[i]: weather_df[scatter_vars[i]],
-                        scatter_vars[j]: weather_df[scatter_vars[j]]
-                    })
-                    st.scatter_chart(scatter_data, x=scatter_vars[i], y=scatter_vars[j])
+            # Pairplot
+            fig = sns.pairplot(weather_df[scatter_vars], diag_kind='kde', 
+                             plot_kws={'alpha': 0.6, 's': 20})
+            fig.fig.suptitle('Pairplot of Selected Features', y=1.02)
+            st.pyplot(fig)
             
             # Specific scatter plot
             st.subheader("Interactive Scatter Plot")
@@ -704,20 +696,30 @@ elif page == "📈 Data Visualization":
             with col3:
                 color_var = st.selectbox("Color by", ['None'] + scatter_vars)
             
+            fig, ax = plt.subplots(figsize=(8, 6))
+            
             if color_var != 'None':
-                # Untuk color coding, kita buat dataframe dengan semua data
-                scatter_data = pd.DataFrame({
-                    x_var: weather_df[x_var],
-                    y_var: weather_df[y_var],
-                    color_var: weather_df[color_var]
-                })
-                st.scatter_chart(scatter_data, x=x_var, y=y_var, color=color_var)
+                scatter = ax.scatter(weather_df[x_var], weather_df[y_var],
+                                   c=weather_df[color_var], cmap='viridis',
+                                   alpha=0.6, s=30)
+                plt.colorbar(scatter, ax=ax, label=color_var)
             else:
-                scatter_data = pd.DataFrame({
-                    x_var: weather_df[x_var],
-                    y_var: weather_df[y_var]
-                })
-                st.scatter_chart(scatter_data, x=x_var, y=y_var)
+                ax.scatter(weather_df[x_var], weather_df[y_var],
+                         alpha=0.6, s=30)
+            
+            ax.set_xlabel(x_var)
+            ax.set_ylabel(y_var)
+            ax.set_title(f'{y_var} vs {x_var}')
+            ax.grid(True, alpha=0.3)
+            
+            # Add regression line
+            if st.checkbox("Show regression line"):
+                z = np.polyfit(weather_df[x_var], weather_df[y_var], 1)
+                p = np.poly1d(z)
+                ax.plot(weather_df[x_var], p(weather_df[x_var]), "r--", alpha=0.8)
+                st.write(f"Regression line: y = {z[0]:.3f}x + {z[1]:.3f}")
+            
+            st.pyplot(fig)
 
 # ====================== HALAMAN ABOUT ======================
 elif page == "ℹ️ About":
@@ -859,8 +861,9 @@ elif page == "ℹ️ About":
     with col_tech2:
         st.markdown("""
         **Visualization**
-        - Streamlit Charts
-        - HTML/CSS
+        - Matplotlib
+        - Seaborn
+        - Plotly
         """)
     
     with col_tech3:
