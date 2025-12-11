@@ -839,9 +839,9 @@ elif page == "ℹ️ About":
         
         ### 📞 Support
         For issues or questions:
-        - GitHub Repository: https://github.com/unVeroz007/weather-forecast-app
-        - Email: belumtau@gmail.com
-        - Course Instructor: Luthfil Khairi S.Kom., M.Sc.
+        - GitHub Repository: [link]
+        - Email: kelompok3@university.edu
+        - Course Instructor: Prof. Data Science
         """)
     
     # Tech stack badges
